@@ -1,0 +1,13 @@
+**/__pycache__
+*.pyc
+.venv
+venv
+dist
+build
+.git
+.gitignore
+*.log
+*.cache
+*.wav
+*.mp3
+cache/

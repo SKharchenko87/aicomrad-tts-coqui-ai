@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+TTS>=0.22.0
+torch==2.1.2
+torchaudio==2.1.2
+soundfile
+pydub
+python-multipart
+jinja2
+aiofiles
+cachetools
+transformers==4.33.0
