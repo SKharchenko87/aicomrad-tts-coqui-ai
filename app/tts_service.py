@@ -6,8 +6,11 @@ from typing import List
 
 class TTSService:
     def __init__(self, use_gpu: bool = False, cache=None):
+        import threading
         self.use_gpu = use_gpu
         self.cache = cache
+        self._lock = threading.Lock()  # Блокировка для GPU
+        
         # Только XTTS v2
         self.models = {
             'xtts-v2': {
@@ -31,21 +34,23 @@ class TTSService:
         model_id = 'xtts-v2'
         
         if model_id not in self._instances:
-            config = self.models.get(model_id)
-            if not config:
-                raise RuntimeError(f'Model not found: {model_id}')
-            
-            print(f"Loading model: {model_id}...")
-            try:
-                self._instances[model_id] = TTS(
-                    model_name=config['name'], 
-                    progress_bar=False, 
-                    gpu=self.use_gpu
-                )
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                raise e
+            with self._lock:  # Блокируем создание инстанса
+                if model_id not in self._instances: # Double check locking
+                    config = self.models.get(model_id)
+                    if not config:
+                        raise RuntimeError(f'Model not found: {model_id}')
+                    
+                    print(f"Loading model: {model_id}...")
+                    try:
+                        self._instances[model_id] = TTS(
+                            model_name=config['name'], 
+                            progress_bar=False, 
+                            gpu=self.use_gpu
+                        )
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        raise e
         return self._instances[model_id]
 
     def get_models(self):
@@ -76,107 +81,110 @@ class TTSService:
         import time
         from datetime import datetime
         
-        print(f"\n{'='*60}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🎬 Starting synthesis")
-        print(f"  Model: {model_id}, Language: {language}, Speaker: {speaker}")
-        print(f"  Parts: {len(parts)}, Format: {out_format}")
-        print(f"{'='*60}")
-        
-        start_time = time.time()
-        
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 📥 Getting TTS instance...")
-        tts = self._get_tts(model_id)
-        load_time = time.time() - start_time
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✓ TTS loaded ({load_time:.2f}s)")
-        
-        tmp_files = []
-        try:
-            for i, p in enumerate(parts):
-                part_start = time.time()
-                print(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🔊 Synthesizing part {i+1}/{len(parts)}: '{p[:50]}...'")
-                
-                fd = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                out = fd.name
-                fd.close()
-                
-                # Параметры синтеза
-                kwargs = {'text': p, 'file_path': out}
-                
-                # XTTS и мульти-язычные модели требуют language
-                if hasattr(tts, 'is_multi_lingual') and tts.is_multi_lingual:
-                    kwargs['language'] = language
-                
-                # Для XTTS v2 используем speaker_wav
-                if model_id == 'xtts-v2':
-                    # Используем дефолтный спикер если не указан
-                    speaker_id = speaker if speaker else 'female-1'
-                    speaker_wav_path = os.path.join(self._speaker_samples_dir, f'{speaker_id}.wav')
-                    
-                    if os.path.exists(speaker_wav_path):
-                        kwargs['speaker_wav'] = speaker_wav_path
-                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using speaker sample: {speaker_id}")
-                    else:
-                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   ⚠️  Speaker sample not found: {speaker_wav_path}, using default")
-                        # Попробуем использовать первый доступный
-                        for default_speaker in self.default_speakers.keys():
-                            default_path = os.path.join(self._speaker_samples_dir, f'{default_speaker}.wav')
-                            if os.path.exists(default_path):
-                                kwargs['speaker_wav'] = default_path
-                                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using fallback speaker: {default_speaker}")
-                                break
-                else:
-                    # Для других моделей используем speaker name если доступен
-                    if hasattr(tts, 'is_multi_speaker') and tts.is_multi_speaker:
-                        if hasattr(tts, 'speakers') and tts.speakers and len(tts.speakers) > 0:
-                            if speaker:
-                                kwargs['speaker'] = speaker
-                            else:
-                                kwargs['speaker'] = tts.speakers[0]
-                                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using default speaker: {tts.speakers[0]}")
-                
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   🚀 Calling TTS engine...")
-                tts_start = time.time()
-                tts.tts_to_file(**kwargs)
-                tts_time = time.time() - tts_start
-                
-                part_time = time.time() - part_start
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   ✓ Part {i+1} done: TTS={tts_time:.2f}s, Total={part_time:.2f}s")
-                
-                tmp_files.append(out)
-
-            # Объединяем части
-            print(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🔗 Combining {len(tmp_files)} audio parts...")
-            combine_start = time.time()
-            combined = AudioSegment.empty()
-            for f in tmp_files:
-                seg = AudioSegment.from_wav(f)
-                combined += seg
-
-            out_path = tempfile.NamedTemporaryFile(suffix='.' + out_format, delete=False).name
-            if out_format == 'wav':
-                combined.export(out_path, format='wav')
-            elif out_format == 'mp3':
-                combined.export(out_path, format='mp3')
-            else:
-                raise ValueError(f'Unsupported format: {out_format}')
-            
-            combine_time = time.time() - combine_start
-            total_time = time.time() - start_time
-            
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✓ Combining done ({combine_time:.2f}s)")
+        # Блокируем доступ к модели, чтобы избежать гонки потоков на GPU
+        # Это делает обработку последовательной, но безопасной
+        with self._lock:
             print(f"\n{'='*60}")
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ SYNTHESIS COMPLETE")
-            print(f"  Total time: {total_time:.2f}s")
-            print(f"  Output: {out_path}")
-            print(f"{'='*60}\n")
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🎬 Starting synthesis (Lock acquired)")
+            print(f"  Model: {model_id}, Language: {language}, Speaker: {speaker}")
+            print(f"  Parts: {len(parts)}, Format: {out_format}")
+            print(f"{'='*60}")
             
-            return out_path
-        finally:
-            for f in tmp_files:
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
+            start_time = time.time()
+            
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 📥 Getting TTS instance...")
+            tts = self._get_tts(model_id)
+            load_time = time.time() - start_time
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✓ TTS loaded ({load_time:.2f}s)")
+            
+            tmp_files = []
+            try:
+                for i, p in enumerate(parts):
+                    part_start = time.time()
+                    print(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🔊 Synthesizing part {i+1}/{len(parts)}: '{p[:50]}...'")
+                    
+                    fd = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    out = fd.name
+                    fd.close()
+                    
+                    # Параметры синтеза
+                    kwargs = {'text': p, 'file_path': out}
+                    
+                    # XTTS и мульти-язычные модели требуют language
+                    if hasattr(tts, 'is_multi_lingual') and tts.is_multi_lingual:
+                        kwargs['language'] = language
+                    
+                    # Для XTTS v2 используем speaker_wav
+                    if model_id == 'xtts-v2':
+                        # Используем дефолтный спикер если не указан
+                        speaker_id = speaker if speaker else 'female-1'
+                        speaker_wav_path = os.path.join(self._speaker_samples_dir, f'{speaker_id}.wav')
+                        
+                        if os.path.exists(speaker_wav_path):
+                            kwargs['speaker_wav'] = speaker_wav_path
+                            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using speaker sample: {speaker_id}")
+                        else:
+                            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   ⚠️  Speaker sample not found: {speaker_wav_path}, using default")
+                            # Попробуем использовать первый доступный
+                            for default_speaker in self.default_speakers.keys():
+                                default_path = os.path.join(self._speaker_samples_dir, f'{default_speaker}.wav')
+                                if os.path.exists(default_path):
+                                    kwargs['speaker_wav'] = default_path
+                                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using fallback speaker: {default_speaker}")
+                                    break
+                    else:
+                        # Для других моделей используем speaker name если доступен
+                        if hasattr(tts, 'is_multi_speaker') and tts.is_multi_speaker:
+                            if hasattr(tts, 'speakers') and tts.speakers and len(tts.speakers) > 0:
+                                if speaker:
+                                    kwargs['speaker'] = speaker
+                                else:
+                                    kwargs['speaker'] = tts.speakers[0]
+                                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using default speaker: {tts.speakers[0]}")
+                    
+                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   🚀 Calling TTS engine...")
+                    tts_start = time.time()
+                    tts.tts_to_file(**kwargs)
+                    tts_time = time.time() - tts_start
+                    
+                    part_time = time.time() - part_start
+                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   ✓ Part {i+1} done: TTS={tts_time:.2f}s, Total={part_time:.2f}s")
+                    
+                    tmp_files.append(out)
+
+                # Объединяем части
+                print(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🔗 Combining {len(tmp_files)} audio parts...")
+                combine_start = time.time()
+                combined = AudioSegment.empty()
+                for f in tmp_files:
+                    seg = AudioSegment.from_wav(f)
+                    combined += seg
+
+                out_path = tempfile.NamedTemporaryFile(suffix='.' + out_format, delete=False).name
+                if out_format == 'wav':
+                    combined.export(out_path, format='wav')
+                elif out_format == 'mp3':
+                    combined.export(out_path, format='mp3')
+                else:
+                    raise ValueError(f'Unsupported format: {out_format}')
+                
+                combine_time = time.time() - combine_start
+                total_time = time.time() - start_time
+                
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✓ Combining done ({combine_time:.2f}s)")
+                print(f"\n{'='*60}")
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ SYNTHESIS COMPLETE")
+                print(f"  Total time: {total_time:.2f}s")
+                print(f"  Output: {out_path}")
+                print(f"{'='*60}\n")
+                
+                return out_path
+            finally:
+                for f in tmp_files:
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
 
     def create_speaker(self, speaker_id: str, audio_file) -> dict:
         """Создание нового спикера из аудиофайла"""

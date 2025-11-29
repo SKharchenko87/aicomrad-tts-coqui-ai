@@ -79,13 +79,25 @@ async def synthesize(
 
     # Генерация
     try:
-        out_path = tts.synthesize_to_file(parts, model_id=model_id, language=language, speaker=speaker, out_format=fmt)
+        from starlette.concurrency import run_in_threadpool
+        
+        # Запускаем синхронный метод в threadpool, чтобы не блокировать event loop
+        out_path = await run_in_threadpool(
+            tts.synthesize_to_file,
+            parts, 
+            model_id=model_id, 
+            language=language, 
+            speaker=speaker, 
+            out_format=fmt
+        )
+        
         cache.put(cache_key, out_path)
         
         return FileResponse(
             out_path,
             media_type='audio/' + fmt,
-            filename=os.path.basename(out_path)
+            filename=os.path.basename(out_path),
+            content_disposition_type='inline'
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

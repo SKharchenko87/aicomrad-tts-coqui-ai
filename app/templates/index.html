@@ -146,10 +146,7 @@
             }
         }
 
-        modelSelect.addEventListener('change', () => {
-            updateLanguages();
-            updateSpeakers();
-        });
+
 
         // Счётчик символов
         textArea.addEventListener('input', () => {
@@ -163,7 +160,7 @@
         });
 
         // Обработка формы
-        form.addEventListener('submit', async (e) => {
+        ttsForm.addEventListener('submit', async (e) => {
             e.preventDefault();
 
             // Скрываем предыдущие результаты
@@ -176,7 +173,7 @@
             synthesizeBtn.disabled = true;
 
             try {
-                const formData = new FormData(form);
+                const formData = new FormData(ttsForm);
                 const response = await fetch('/synthesize', {
                     method: 'POST',
                     body: formData
@@ -238,11 +235,6 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             }
-        });
-
-        // Счетчик символов
-        textArea.addEventListener('input', () => {
-            charCount.textContent = textArea.value.length;
         });
     </script>
 </body>
