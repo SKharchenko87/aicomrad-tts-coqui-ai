@@ -33,12 +33,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 
 ```bash
 # Сборка
-docker build -t coqui-tts:cpu .
+docker build -t aicomrad-tts-coqui-ai:cpu .
 
 # Запуск (с сохранением моделей)
 docker run --rm -p 5000:5000 \
   -v $(pwd)/models:/app/data \
-  coqui-tts:cpu
+  aicomrad-tts-coqui-ai:cpu
 ```
 
 Модели будут скачиваться в папку `models/tts` на хосте и сохраняться между перезапусками.
@@ -46,8 +46,8 @@ docker run --rm -p 5000:5000 \
 ### Пример сборки GPU:
 
 ```bash
-docker build --build-arg BUILD_FOR_GPU=1 -t coqui-tts:gpu .
-docker run --gpus all --rm -p 5000:5000 coqui-tts:gpu
+docker build --build-arg BUILD_FOR_GPU=1 -t aicomrad-tts-coqui-ai:gpu .
+docker run --rm --gpus all -p 5000:5000 aicomrad-tts-coqui-ai:gpu
 ```
 
 ### Docker Compose:

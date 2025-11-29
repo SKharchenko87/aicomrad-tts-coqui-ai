@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speaker Management - Coqui TTS</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 Speaker Management</h1>
+            <p class="subtitle">Управление голосами для XTTS v2</p>
+            <a href="/" class="back-link">← Вернуться к синтезу</a>
+        </div>
+
+        <div class="card">
+            <h3>Создать новый голос</h3>
+            <form id="uploadForm">
+                <div class="form-group">
+                    <label for="speaker_id">ID голоса</label>
+                    <input type="text" id="speaker_id" name="speaker_id" placeholder="my-voice" pattern="[a-zA-Z0-9_-]+"
+                        required>
+                    <small>Только буквы, цифры, дефисы и подчеркивания</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="audio">Аудиофайл (3-10 сек)</label>
+                    <div class="file-upload" id="dropZone">
+                        <input type="file" id="audio" name="audio" accept="audio/*" required>
+                        <div class="upload-text">
+                            <span class="upload-icon">📁</span>
+                            <p>Перетащите файл сюда или нажмите для выбора</p>
+                            <small>WAV, MP3, FLAC (макс. 10 МБ)</small>
+                        </div>
+                        <div class="file-name" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary" id="uploadBtn">
+                    <span class="btn-text">Создать голос</span>
+                    <span class="btn-loader" style="display: none;">
+                        <span class="spinner"></span> Загрузка...
+                    </span>
+                </button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>Доступные голоса</h3>
+            <div id="speakersList" class="speakers-list">
+                <p class="loading">Загрузка...</p>
+            </div>
+        </div>
+
+        <div id="errorCard" class="card error-card" style="display: none;">
+            <h3>⚠️ Ошибка</h3>
+            <p id="errorMessage"></p>
+        </div>
+
+        <div id="successCard" class="card success-card" style="display: none;">
+            <h3>✅ Успешно</h3>
+            <p id="successMessage"></p>
+        </div>
+    </div>
+
+    <script>
+        const uploadForm = document.getElementById('uploadForm');
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('audio');
+        const fileName = dropZone.querySelector('.file-name');
+        const uploadText = dropZone.querySelector('.upload-text');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const btnText = uploadBtn.querySelector('.btn-text');
+        const btnLoader = uploadBtn.querySelector('.btn-loader');
+        const speakersList = document.getElementById('speakersList');
+        const errorCard = document.getElementById('errorCard');
+        const successCard = document.getElementById('successCard');
+
+        // Drag and drop
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                updateFileName();
+            }
+        });
+
+        fileInput.addEventListener('change', updateFileName);
+
+        function updateFileName() {
+            if (fileInput.files.length) {
+                fileName.textContent = fileInput.files[0].name;
+                fileName.style.display = 'block';
+                uploadText.style.display = 'none';
+            }
+        }
+
+        // Upload form
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            hideMessages();
+            btnText.style.display = 'none';
+            btnLoader.style.display = 'flex';
+            uploadBtn.disabled = true;
+
+            try {
+                const formData = new FormData(uploadForm);
+                const response = await fetch('/api/speakers', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Ошибка создания голоса');
+                }
+
+                showSuccess(`Голос "${data.speaker.speaker_id}" успешно создан!`);
+                uploadForm.reset();
+                fileName.style.display = 'none';
+                uploadText.style.display = 'block';
+                loadSpeakers();
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                btnText.style.display = 'inline';
+                btnLoader.style.display = 'none';
+                uploadBtn.disabled = false;
+            }
+        });
+
+        // Load speakers
+        async function loadSpeakers() {
+            try {
+                const response = await fetch('/api/speakers');
+                const data = await response.json();
+
+                speakersList.innerHTML = '';
+
+                if (data.speakers.length === 0) {
+                    speakersList.innerHTML = '<p class="empty">Нет доступных голосов</p>';
+                    return;
+                }
+
+                data.speakers.forEach(speaker => {
+                    const item = document.createElement('div');
+                    item.className = 'speaker-item';
+                    item.innerHTML = `
+                        <div class="speaker-info">
+                            <h4>${speaker.label}</h4>
+                            <span class="speaker-id">${speaker.speaker_id}</span>
+                            ${speaker.is_default ? '<span class="badge">Default</span>' : ''}
+                        </div>
+                        <div class="speaker-actions">
+                            <button class="btn-icon" onclick="playSpeaker('${speaker.speaker_id}')" title="Прослушать">
+                                ▶️
+                            </button>
+                            ${!speaker.is_default ? `
+                                <button class="btn-icon btn-danger" onclick="deleteSpeaker('${speaker.speaker_id}')" title="Удалить">
+                                    🗑️
+                                </button>
+                            ` : ''}
+                        </div>
+                    `;
+                    speakersList.appendChild(item);
+                });
+            } catch (error) {
+                speakersList.innerHTML = '<p class="error">Ошибка загрузки голосов</p>';
+            }
+        }
+
+        // Play speaker
+        async function playSpeaker(speakerId) {
+            try {
+                const audio = new Audio(`/api/speakers/${speakerId}/audio`);
+                await audio.play();
+            } catch (error) {
+                showError('Ошибка воспроизведения');
+            }
+        }
+
+        // Delete speaker
+        async function deleteSpeaker(speakerId) {
+            if (!confirm(`Удалить голос "${speakerId}"?`)) return;
+
+            try {
+                const response = await fetch(`/api/speakers/${speakerId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Ошибка удаления');
+                }
+
+                showSuccess(`Голос "${speakerId}" удален`);
+                loadSpeakers();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            errorCard.style.display = 'block';
+            successCard.style.display = 'none';
+            setTimeout(() => errorCard.style.display = 'none', 5000);
+        }
+
+        function showSuccess(message) {
+            document.getElementById('successMessage').textContent = message;
+            successCard.style.display = 'block';
+            errorCard.style.display = 'none';
+            setTimeout(() => successCard.style.display = 'none', 5000);
+        }
+
+        function hideMessages() {
+            errorCard.style.display = 'none';
+            successCard.style.display = 'none';
+        }
+
+        // Load speakers on page load
+        loadSpeakers();
+    </script>
+</body>
+
+</html>

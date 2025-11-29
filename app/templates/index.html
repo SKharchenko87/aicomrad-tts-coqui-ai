@@ -16,6 +16,7 @@
         <div class="header">
             <h1>🎙️ Coqui TTS</h1>
             <p class="subtitle">Преобразование текста в речь с использованием нейросетей</p>
+            <a href="/speakers" class="nav-link">🎤 Управление голосами</a>
         </div>
 
         <div class="card">
@@ -138,12 +139,23 @@
             speakerGroup.style.display = 'block';
 
             try {
-                const res = await fetch(`/speakers/${modelId}`);
-                const data = await res.json();
+                let speakers = [];
+
+                // Для XTTS v2 используем /api/speakers чтобы получить все спикеры (включая пользовательские)
+                if (modelId === 'xtts-v2') {
+                    const res = await fetch('/api/speakers');
+                    const data = await res.json();
+                    speakers = data.speakers.map(s => s.speaker_id);
+                } else {
+                    // Для других моделей используем старый endpoint
+                    const res = await fetch(`/speakers/${modelId}`);
+                    const data = await res.json();
+                    speakers = data.speakers || [];
+                }
 
                 speakerSelect.innerHTML = '';
-                if (data.speakers && data.speakers.length > 0) {
-                    data.speakers.forEach(spk => {
+                if (speakers.length > 0) {
+                    speakers.forEach(spk => {
                         const option = document.createElement('option');
                         option.value = spk;
                         option.textContent = spk;

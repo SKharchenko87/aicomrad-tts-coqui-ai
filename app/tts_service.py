@@ -154,3 +154,105 @@ class TTSService:
                     os.remove(f)
                 except Exception:
                     pass
+
+    def create_speaker(self, speaker_id: str, audio_file) -> dict:
+        """Создание нового спикера из аудиофайла"""
+        import shutil
+        from datetime import datetime
+        
+        print(f"\n{'='*60}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Начало создания спикера: {speaker_id}")
+        print(f"{'='*60}")
+        
+        # Проверка валидности speaker_id
+        if not speaker_id or not speaker_id.replace('-', '').replace('_', '').isalnum():
+            error_msg = "Speaker ID должен содержать только буквы, цифры, дефисы и подчеркивания"
+            print(f"❌ ОШИБКА: {error_msg}")
+            raise ValueError(error_msg)
+        
+        print(f"✓ Валидация speaker_id пройдена: {speaker_id}")
+        
+        # Проверка, что это не дефолтный спикер
+        if speaker_id in self.default_speakers:
+            error_msg = f"Нельзя перезаписать дефолтный спикер: {speaker_id}"
+            print(f"❌ ОШИБКА: {error_msg}")
+            raise ValueError(error_msg)
+        
+        print(f"✓ Проверка на дефолтный спикер пройдена")
+        
+        # Создаем директорию если не существует
+        os.makedirs(self._speaker_samples_dir, exist_ok=True)
+        print(f"✓ Директория создана/проверена: {self._speaker_samples_dir}")
+        
+        # Сохраняем аудиофайл
+        speaker_path = os.path.join(self._speaker_samples_dir, f'{speaker_id}.wav')
+        print(f"📝 Сохранение аудиофайла: {speaker_path}")
+        
+        try:
+            # Если файл уже существует, перезаписываем
+            with open(speaker_path, 'wb') as f:
+                shutil.copyfileobj(audio_file, f)
+            
+            file_size = os.path.getsize(speaker_path)
+            print(f"✓ Аудиофайл сохранен успешно ({file_size} bytes)")
+        except Exception as e:
+            print(f"❌ ОШИБКА при сохранении файла: {e}")
+            raise
+        
+        result = {
+            'speaker_id': speaker_id,
+            'path': speaker_path,
+            'is_default': False
+        }
+        
+        print(f"\n{'='*60}")
+        print(f"✅ УСПЕХ: Спикер '{speaker_id}' создан и готов к использованию!")
+        print(f"{'='*60}\n")
+        
+        return result
+    
+    def delete_speaker(self, speaker_id: str) -> bool:
+        """Удаление пользовательского спикера"""
+        # Нельзя удалять дефолтные спикеры
+        if speaker_id in self.default_speakers:
+            raise ValueError(f"Нельзя удалить дефолтный спикер: {speaker_id}")
+        
+        speaker_path = os.path.join(self._speaker_samples_dir, f'{speaker_id}.wav')
+        
+        if os.path.exists(speaker_path):
+            os.remove(speaker_path)
+            return True
+        return False
+    
+    def get_all_speakers(self) -> list:
+        """Получение списка всех спикеров (дефолтных и пользовательских)"""
+        speakers = []
+        
+        # Добавляем дефолтные спикеры
+        for speaker_id, label in self.default_speakers.items():
+            speakers.append({
+                'speaker_id': speaker_id,
+                'label': label,
+                'is_default': True
+            })
+        
+        # Добавляем пользовательские спикеры
+        if os.path.exists(self._speaker_samples_dir):
+            for filename in os.listdir(self._speaker_samples_dir):
+                if filename.endswith('.wav'):
+                    speaker_id = filename[:-4]  # убираем .wav
+                    if speaker_id not in self.default_speakers:
+                        speakers.append({
+                            'speaker_id': speaker_id,
+                            'label': speaker_id.replace('-', ' ').replace('_', ' ').title(),
+                            'is_default': False
+                        })
+        
+        return speakers
+    
+    def get_speaker_audio_path(self, speaker_id: str) -> str:
+        """Получение пути к аудиофайлу спикера"""
+        speaker_path = os.path.join(self._speaker_samples_dir, f'{speaker_id}.wav')
+        if os.path.exists(speaker_path):
+            return speaker_path
+        raise FileNotFoundError(f"Speaker {speaker_id} not found")
