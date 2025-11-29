@@ -30,38 +30,46 @@
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="model_id">Модель</label>
-                    <select id="model_id" name="model_id">
-                        {% for id, model in models.items() %}
-                        <option value="{{ id }}" {% if id=='xtts-v2' %}selected{% endif %}>{{ model.label }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="form-group" id="speakerGroup" style="display: none;">
-                    <label for="speaker">Спикер</label>
-                    <select id="speaker" name="speaker">
-                        <!-- Populated by JS -->
-                    </select>
-                </div>
+                <!-- Hidden model field - always XTTS v2 -->
+                <input type="hidden" id="model_id" name="model_id" value="xtts-v2">
 
                 <div class="form-row">
                     <div class="form-group">
                         <label for="language">Язык</label>
                         <select id="language" name="language">
                             <option value="en">English</option>
-                            <option value="ru">Русский</option>
+                            <option value="ru" selected>Русский</option>
+                            <option value="es">Español</option>
+                            <option value="fr">Français</option>
+                            <option value="de">Deutsch</option>
+                            <option value="it">Italiano</option>
+                            <option value="pt">Português</option>
+                            <option value="pl">Polski</option>
+                            <option value="tr">Türkçe</option>
+                            <option value="nl">Nederlands</option>
+                            <option value="cs">Čeština</option>
+                            <option value="ar">العربية</option>
+                            <option value="zh-cn">中文</option>
+                            <option value="ja">日本語</option>
+                            <option value="hu">Magyar</option>
+                            <option value="ko">한국어</option>
                         </select>
                     </div>
 
                     <div class="form-group">
-                        <label for="fmt">Формат</label>
-                        <select id="fmt" name="fmt">
-                            <option value="wav">WAV</option>
-                            <option value="mp3">MP3</option>
+                        <label for="speaker">Голос</label>
+                        <select id="speaker" name="speaker">
+                            <!-- Populated by JS -->
                         </select>
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="fmt">Формат</label>
+                    <select id="fmt" name="fmt">
+                        <option value="wav">WAV</option>
+                        <option value="mp3">MP3</option>
+                    </select>
                 </div>
 
                 <button type="submit" class="btn-primary" id="synthesizeBtn">
@@ -90,12 +98,9 @@
     </div>
 
     <script>
-        const models = {{ models | tojson }};
-    </script>
-    <script>
-        const form = document.getElementById('ttsForm');
         const textArea = document.getElementById('text');
         const charCount = document.getElementById('charCount');
+        const ttsForm = document.getElementById('ttsForm');
         const synthesizeBtn = document.getElementById('synthesizeBtn');
         const btnText = synthesizeBtn.querySelector('.btn-text');
         const btnLoader = synthesizeBtn.querySelector('.btn-loader');
@@ -104,54 +109,22 @@
         const audioPlayer = document.getElementById('audioPlayer');
         const downloadBtn = document.getElementById('downloadBtn');
 
-        const modelSelect = document.getElementById('model_id');
-        const langSelect = document.getElementById('language');
         const speakerSelect = document.getElementById('speaker');
-        const speakerGroup = document.getElementById('speakerGroup');
 
         let currentAudioBlob = null;
         let currentFilename = null;
 
-        // Инициализация
-        function init() {
-            updateLanguages();
-            updateSpeakers();
-        }
+        // Инициализация - загружаем спикеры
+        loadSpeakers();
 
-        // Обновление списка языков
-        function updateLanguages() {
-            const modelId = modelSelect.value;
-            const model = models[modelId];
-
-            langSelect.innerHTML = '';
-            model.languages.forEach(lang => {
-                const option = document.createElement('option');
-                option.value = lang;
-                option.textContent = lang.toUpperCase();
-                langSelect.appendChild(option);
-            });
-        }
-
-        // Обновление списка спикеров
-        async function updateSpeakers() {
-            const modelId = modelSelect.value;
+        // Загрузка списка спикеров для XTTS v2
+        async function loadSpeakers() {
             speakerSelect.innerHTML = '<option value="">Загрузка...</option>';
-            speakerGroup.style.display = 'block';
 
             try {
-                let speakers = [];
-
-                // Для XTTS v2 используем /api/speakers чтобы получить все спикеры (включая пользовательские)
-                if (modelId === 'xtts-v2') {
-                    const res = await fetch('/api/speakers');
-                    const data = await res.json();
-                    speakers = data.speakers.map(s => s.speaker_id);
-                } else {
-                    // Для других моделей используем старый endpoint
-                    const res = await fetch(`/speakers/${modelId}`);
-                    const data = await res.json();
-                    speakers = data.speakers || [];
-                }
+                const res = await fetch('/api/speakers');
+                const data = await res.json();
+                const speakers = data.speakers.map(s => s.speaker_id);
 
                 speakerSelect.innerHTML = '';
                 if (speakers.length > 0) {
@@ -161,9 +134,7 @@
                         option.textContent = spk;
                         speakerSelect.appendChild(option);
                     });
-                    speakerGroup.style.display = 'block';
                 } else {
-                    speakerGroup.style.display = 'none';
                     const option = document.createElement('option');
                     option.value = "";
                     option.textContent = "Default";
@@ -269,8 +240,10 @@
             }
         });
 
-        // Запуск
-        init();
+        // Счетчик символов
+        textArea.addEventListener('input', () => {
+            charCount.textContent = textArea.value.length;
+        });
     </script>
 </body>
 

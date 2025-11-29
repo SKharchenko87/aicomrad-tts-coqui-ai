@@ -31,6 +31,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 
 ### Запуск через Docker
 
+#### CPU версия (по умолчанию)
+
 ```bash
 # Сборка
 docker build -t aicomrad-tts-coqui-ai:cpu .
@@ -43,12 +45,37 @@ docker run --rm -p 5000:5000 \
 
 Модели будут скачиваться в папку `models/tts` на хосте и сохраняться между перезапусками.
 
-### Пример сборки GPU:
+#### GPU версия (NVIDIA CUDA)
 
+**Требования:**
+- NVIDIA GPU с CUDA Compute Capability >= 3.5
+- NVIDIA Docker runtime установлен
+- Драйверы NVIDIA >= 450.80.02
+- ~4-6 GB VRAM для XTTS v2
+
+**Проверка NVIDIA Docker:**
 ```bash
-docker build --build-arg BUILD_FOR_GPU=1 -t aicomrad-tts-coqui-ai:gpu .
-docker run --rm --gpus all -p 5000:5000 aicomrad-tts-coqui-ai:gpu
+docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 ```
+
+**Сборка и запуск:**
+```bash
+# Сборка GPU образа
+docker build --build-arg BUILD_FOR_GPU=1 -t aicomrad-tts-coqui-ai:gpu .
+
+# Запуск с GPU
+docker run --rm --gpus all -p 5000:5000 \
+  -v $(pwd)/models:/app/data \
+  aicomrad-tts-coqui-ai:gpu
+```
+
+**Производительность:**
+- CPU: ~5-10 сек на предложение
+- GPU: ~1-3 сек на предложение (3-5x ускорение)
+
+**Размер образа:**
+- CPU: ~3-4 GB
+- GPU: ~8-10 GB (включает CUDA библиотеки)
 
 ### Docker Compose:
 

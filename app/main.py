@@ -21,6 +21,24 @@ cache = FileCache(cache_dir='cache', ttl=CACHE_TTL)
 use_gpu = os.getenv('USE_GPU', '0') == '1'
 tts = TTSService(use_gpu=use_gpu, cache=cache)
 
+# Предзагрузка модели при старте
+@app.on_event("startup")
+async def startup_event():
+    """Предзагрузка модели в память при старте приложения"""
+    preload_model = os.getenv('PRELOAD_MODEL', 'xtts-v2')
+    if preload_model:
+        print(f"\n{'='*60}")
+        print(f"🚀 Preloading model: {preload_model}")
+        print(f"{'='*60}")
+        try:
+            # Загружаем модель в память
+            tts._get_tts(preload_model)
+            print(f"✅ Model {preload_model} preloaded successfully!")
+            print(f"{'='*60}\n")
+        except Exception as e:
+            print(f"⚠️  Failed to preload model {preload_model}: {e}")
+            print(f"{'='*60}\n")
+
 @app.get('/', response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse('index.html', {

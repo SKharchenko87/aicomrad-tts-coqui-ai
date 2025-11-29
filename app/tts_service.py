@@ -8,22 +8,11 @@ class TTSService:
     def __init__(self, use_gpu: bool = False, cache=None):
         self.use_gpu = use_gpu
         self.cache = cache
-        # Конфигурация моделей
+        # Только XTTS v2
         self.models = {
-            'tacotron-en': {
-                'name': 'tts_models/en/ljspeech/tacotron2-DDC',
-                'languages': ['en'],
-                'label': 'Tacotron 2 (English)'
-            },
-            'tacotron-ru': {
-                'name': 'tts_models/ru/mai/tacotron2',
-                'languages': ['ru'],
-                'label': 'Tacotron 2 (Russian)'
-            },
             'xtts-v2': {
                 'name': 'tts_models/multilingual/multi-dataset/xtts_v2',
-                'languages': ['en', 'ru', 'de', 'es', 'fr', 'it', 'pt', 'pl', 'tr', 'ko', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu'],
-                'label': 'XTTS v2 (Multilingual)'
+                'languages': ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu', 'ko']
             }
         }
         # Дефолтные спикеры для XTTS v2 (будут созданы при первом запуске)
@@ -37,13 +26,10 @@ class TTSService:
         self._instances = {}
         self._speaker_samples_dir = '/app/speaker_samples'
 
-    def _get_tts(self, model_id: str):
-        if model_id not in self.models:
-            # Fallback для обратной совместимости или дефолт
-            if model_id == 'en': model_id = 'tacotron-en'
-            elif model_id == 'ru': model_id = 'tacotron-ru'
-            else: model_id = 'xtts-v2' # Default to XTTS if unknown
-
+    def _get_tts(self, model_id: str = 'xtts-v2'):
+        # Всегда используем XTTS v2
+        model_id = 'xtts-v2'
+        
         if model_id not in self._instances:
             config = self.models.get(model_id)
             if not config:
@@ -86,11 +72,29 @@ class TTSService:
         k = hashlib.sha1(f"{model_id}|{language}|{speaker}|{text}|{fmt}".encode('utf-8')).hexdigest()
         return k
 
-    def synthesize_to_file(self, parts: List[str], model_id: str, language: str = 'en', speaker: str = None, out_format: str = 'wav') -> str:
+    def synthesize_to_file(self, parts: List[str], model_id: str = 'xtts-v2', language: str = 'en', speaker: str = None, out_format: str = 'wav') -> str:
+        import time
+        from datetime import datetime
+        
+        print(f"\n{'='*60}")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🎬 Starting synthesis")
+        print(f"  Model: {model_id}, Language: {language}, Speaker: {speaker}")
+        print(f"  Parts: {len(parts)}, Format: {out_format}")
+        print(f"{'='*60}")
+        
+        start_time = time.time()
+        
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 📥 Getting TTS instance...")
         tts = self._get_tts(model_id)
+        load_time = time.time() - start_time
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✓ TTS loaded ({load_time:.2f}s)")
+        
         tmp_files = []
         try:
             for i, p in enumerate(parts):
+                part_start = time.time()
+                print(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🔊 Synthesizing part {i+1}/{len(parts)}: '{p[:50]}...'")
+                
                 fd = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
                 out = fd.name
                 fd.close()
@@ -110,15 +114,15 @@ class TTSService:
                     
                     if os.path.exists(speaker_wav_path):
                         kwargs['speaker_wav'] = speaker_wav_path
-                        print(f"Using speaker sample: {speaker_id}")
+                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using speaker sample: {speaker_id}")
                     else:
-                        print(f"Warning: Speaker sample not found: {speaker_wav_path}, using default")
+                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   ⚠️  Speaker sample not found: {speaker_wav_path}, using default")
                         # Попробуем использовать первый доступный
                         for default_speaker in self.default_speakers.keys():
                             default_path = os.path.join(self._speaker_samples_dir, f'{default_speaker}.wav')
                             if os.path.exists(default_path):
                                 kwargs['speaker_wav'] = default_path
-                                print(f"Using fallback speaker: {default_speaker}")
+                                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using fallback speaker: {default_speaker}")
                                 break
                 else:
                     # Для других моделей используем speaker name если доступен
@@ -128,12 +132,21 @@ class TTSService:
                                 kwargs['speaker'] = speaker
                             else:
                                 kwargs['speaker'] = tts.speakers[0]
-                                print(f"Using default speaker: {tts.speakers[0]}")
+                                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   Using default speaker: {tts.speakers[0]}")
                 
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   🚀 Calling TTS engine...")
+                tts_start = time.time()
                 tts.tts_to_file(**kwargs)
+                tts_time = time.time() - tts_start
+                
+                part_time = time.time() - part_start
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]   ✓ Part {i+1} done: TTS={tts_time:.2f}s, Total={part_time:.2f}s")
+                
                 tmp_files.append(out)
 
             # Объединяем части
+            print(f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] 🔗 Combining {len(tmp_files)} audio parts...")
+            combine_start = time.time()
             combined = AudioSegment.empty()
             for f in tmp_files:
                 seg = AudioSegment.from_wav(f)
@@ -145,8 +158,18 @@ class TTSService:
             elif out_format == 'mp3':
                 combined.export(out_path, format='mp3')
             else:
-                raise RuntimeError('Unsupported format: ' + out_format)
-
+                raise ValueError(f'Unsupported format: {out_format}')
+            
+            combine_time = time.time() - combine_start
+            total_time = time.time() - start_time
+            
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✓ Combining done ({combine_time:.2f}s)")
+            print(f"\n{'='*60}")
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ SYNTHESIS COMPLETE")
+            print(f"  Total time: {total_time:.2f}s")
+            print(f"  Output: {out_path}")
+            print(f"{'='*60}\n")
+            
             return out_path
         finally:
             for f in tmp_files:
