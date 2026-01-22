@@ -9,29 +9,43 @@ class TTSService:
         import threading
         self.use_gpu = use_gpu
         self.cache = cache
-        self._lock = threading.Lock()  # Блокировка для GPU
+        self._lock = threading.RLock()  # Рекурсивная блокировка для GPU
         
-        # Только XTTS v2
+        # XTTS v2 и пользовательские модели
         self.models = {
             'xtts-v2': {
                 'name': 'tts_models/multilingual/multi-dataset/xtts_v2',
                 'languages': ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu', 'ko']
+            },
+            'goblin': {
+                'name': '/app/models/tts/goblin',
+                'languages': ['ru', 'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu', 'ko', 'hi']
             }
-        }
-        # Дефолтные спикеры для XTTS v2 (будут созданы при первом запуске)
-        self.default_speakers = {
-            'female-1': 'Female Voice 1',
-            'male-1': 'Male Voice 1',
-            'female-2': 'Female Voice 2',
-            'male-2': 'Male Voice 2'
         }
         # Инициализация моделей (лениво)
         self._instances = {}
         self._speaker_samples_dir = '/app/speaker_samples'
+        
+        # Динамическая загрузка спикеров из директории
+        self.default_speakers = {}
+        if os.path.exists(self._speaker_samples_dir):
+            for file in os.listdir(self._speaker_samples_dir):
+                if file.endswith('.wav'):
+                    name = os.path.splitext(file)[0]
+                    self.default_speakers[name] = name
+        
+        # Фолбэк на базовые если пусто
+        if not self.default_speakers:
+            self.default_speakers = {
+                'female-1': 'female-1',
+                'male-1': 'male-1',
+                'female-2': 'female-2',
+                'male-2': 'male-2'
+            }
 
-    def _get_tts(self, model_id: str = 'xtts-v2'):
-        # Всегда используем XTTS v2
-        model_id = 'xtts-v2'
+    def _get_tts(self, model_id: str = None):
+        if not model_id:
+            model_id = os.getenv('PRELOAD_MODEL', 'xtts-v2')
         
         if model_id not in self._instances:
             with self._lock:  # Блокируем создание инстанса
@@ -40,13 +54,54 @@ class TTSService:
                     if not config:
                         raise RuntimeError(f'Model not found: {model_id}')
                     
-                    print(f"Loading model: {model_id}...")
+                    print(f"Loading model: {model_id} from {config['name']}...")
+                    model_dir = config['name']
                     try:
-                        self._instances[model_id] = TTS(
-                            model_name=config['name'], 
-                            progress_bar=False, 
-                            gpu=self.use_gpu
-                        )
+                        if config['name'].startswith('/app/models'):
+                            from TTS.config import load_config
+                            from TTS.tts.models import setup_model as setup_tts_model
+                            from TTS.utils.synthesizer import Synthesizer
+                            
+                            print(f"Loading local XTTS model: {model_id} from {model_dir}")
+                            cfg = load_config(os.path.join(model_dir, 'config.json'))
+                            model = setup_tts_model(cfg)
+                            
+                            # Передаем ОБА параметра, чтобы избежать бага с двойным model.pth
+                            model.load_checkpoint(
+                                cfg, 
+                                checkpoint_dir=model_dir, 
+                                checkpoint_path=os.path.join(model_dir, 'model.pth'), 
+                                eval=True
+                            )
+                            if self.use_gpu:
+                                model.cuda()
+                            
+                            # Оборачиваем в TTS для совместимости с остальным кодом (метод tts_to_file)
+                            from TTS.api import TTS as TTSAPI
+                            tts_instance = TTSAPI(gpu=self.use_gpu)
+                            
+                            # Оборачиваем в Synthesizer
+                            synth = Synthesizer(None, None, use_cuda=self.use_gpu)
+                            synth.tts_config = cfg
+                            synth.tts_model = model
+                            
+                            tts_instance.synthesizer = synth
+                            tts_instance.model_name = "xtts" # Чтобы срабатывала логика XTTS
+                            
+                            # Устанавливаем sample rate для сохранения wav
+                            synth.output_sample_rate = 24000
+                            if hasattr(cfg, 'audio') and 'output_sample_rate' in cfg.audio:
+                                synth.output_sample_rate = cfg.audio['output_sample_rate']
+                            elif hasattr(cfg, 'audio') and 'sample_rate' in cfg.audio:
+                                synth.output_sample_rate = cfg.audio['sample_rate']
+                                
+                            self._instances[model_id] = tts_instance
+                        else:
+                            self._instances[model_id] = TTS(
+                                model_name=config['name'], 
+                                progress_bar=False, 
+                                gpu=self.use_gpu
+                            )
                     except Exception as e:
                         import traceback
                         traceback.print_exc()
@@ -59,13 +114,13 @@ class TTSService:
     def get_speakers(self, model_id: str):
         try:
             tts = self._get_tts(model_id)
-            # Для XTTS v2 возвращаем список дефолтных спикеров
-            if model_id == 'xtts-v2':
+            # Для XTTS моделей возвращаем список дефолтных спикеров
+            if model_id == 'xtts-v2' or model_id == 'goblin':
                 return list(self.default_speakers.keys())
             # Для других моделей проверяем наличие атрибута speakers
             if hasattr(tts, 'speakers') and tts.speakers:
                 return tts.speakers
-            return []
+            return list(self.default_speakers.keys())
         except Exception as e:
             print(f"Error getting speakers for {model_id}: {e}")
             import traceback
@@ -114,10 +169,17 @@ class TTSService:
                     if hasattr(tts, 'is_multi_lingual') and tts.is_multi_lingual:
                         kwargs['language'] = language
                     
-                    # Для XTTS v2 используем speaker_wav
-                    if model_id == 'xtts-v2':
+                    # Для XTTS моделей используем speaker_wav
+                    if 'xtts' in model_id or 'goblin' in model_id:
                         # Используем дефолтный спикер если не указан
-                        speaker_id = speaker if speaker else 'female-1'
+                        default_speaker = 'female-1'
+                        if 'goblin' in model_id:
+                            # Для гоблина всегда стараемся использовать его голос
+                            if 'goblin' in self.default_speakers:
+                                default_speaker = 'goblin'
+                            
+                        # Если спикер не передан или пустая строка (из формы), используем дефолтный
+                        speaker_id = speaker if (speaker and speaker.strip()) else default_speaker
                         speaker_wav_path = os.path.join(self._speaker_samples_dir, f'{speaker_id}.wav')
                         
                         if os.path.exists(speaker_wav_path):

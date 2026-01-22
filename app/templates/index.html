@@ -30,8 +30,14 @@
                     </div>
                 </div>
 
-                <!-- Hidden model field - always XTTS v2 -->
-                <input type="hidden" id="model_id" name="model_id" value="xtts-v2">
+                <div class="form-group">
+                    <label for="model_id">Модель</label>
+                    <select id="model_id" name="model_id">
+                        {% for mid, config in models.items() %}
+                        <option value="{{ mid }}" {% if mid == 'xtts-v2' %}selected{% endif %}>{{ mid }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
 
                 <div class="form-row">
                     <div class="form-group">
@@ -109,6 +115,7 @@
         const audioPlayer = document.getElementById('audioPlayer');
         const downloadBtn = document.getElementById('downloadBtn');
 
+        const modelSelect = document.getElementById('model_id');
         const speakerSelect = document.getElementById('speaker');
 
         let currentAudioBlob = null;
@@ -117,14 +124,18 @@
         // Инициализация - загружаем спикеры
         loadSpeakers();
 
-        // Загрузка списка спикеров для XTTS v2
+        // Обновляем список спикеров при смене модели
+        modelSelect.addEventListener('change', loadSpeakers);
+
+        // Загрузка списка спикеров
         async function loadSpeakers() {
+            const modelId = modelSelect.value;
             speakerSelect.innerHTML = '<option value="">Загрузка...</option>';
 
             try {
-                const res = await fetch('/api/speakers');
+                const res = await fetch(`/speakers/${modelId}`);
                 const data = await res.json();
-                const speakers = data.speakers.map(s => s.speaker_id);
+                const speakers = Array.isArray(data.speakers) ? data.speakers : [];
 
                 speakerSelect.innerHTML = '';
                 if (speakers.length > 0) {
